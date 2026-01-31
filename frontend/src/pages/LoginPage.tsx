@@ -1,12 +1,10 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { Shield } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 
 export function LoginPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const navigate = useNavigate();
   const { signInWithGoogle } = useAuth();
 
   const handleGoogleLogin = async () => {

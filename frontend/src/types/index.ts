@@ -11,11 +11,11 @@ export interface Wallet {
 
 export interface Transaction {
   id: string;
-  from: string;
-  to: string;
+  from_wallet: string;
+  to_wallet: string;
   amount: number;
-  timestamp: string;
-  tokenType: string;
+  timestamp?: string;
+  token_type: string;
 }
 
 export interface Project {
