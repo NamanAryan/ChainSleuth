@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useSearchParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { supabase } from "../lib/supabase";
 import GraphVisualization from "../components/GraphVisualization";
@@ -7,10 +7,9 @@ import type { Project, AnalysisResult, Transaction } from "../types";
 import { ArrowLeft } from "lucide-react";
 
 export default function Dashboard() {
-  const [searchParams] = useSearchParams();
+  const { projectId } = useParams<{ projectId: string }>();
   const navigate = useNavigate();
   const { user } = useAuth();
-  const projectId = searchParams.get("projectId");
 
   const [project, setProject] = useState<Project | null>(null);
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
@@ -19,16 +18,17 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (!projectId) {
-      navigate("/");
+      navigate("/projects");
       return;
     }
 
     fetchProjectAnalysis();
-  }, [projectId]);
+  }, [projectId, navigate]);
 
   const fetchProjectAnalysis = async () => {
     try {
       setLoading(true);
+      console.log("📊 Loading project analysis for:", projectId);
       const {
         data: { session },
       } = await supabase.auth.getSession();
@@ -38,20 +38,22 @@ export default function Dashboard() {
         return;
       }
 
-      const response = await fetch(
-        `http://localhost:8000/api/projects/${projectId}/analysis`,
-        {
-          headers: {
-            Authorization: `Bearer ${session.access_token}`,
-          },
+      const apiUrl = `http://localhost:8000/api/projects/${projectId}/analysis`;
+      console.log("📡 Fetching from:", apiUrl);
+      const response = await fetch(apiUrl, {
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
         },
-      );
+      });
 
       if (!response.ok) {
+        const errorText = await response.text();
+        console.error("❌ API Error:", response.status, errorText);
         throw new Error("Failed to fetch analysis data");
       }
 
       const data = await response.json();
+      console.log("✓ Analysis data loaded:", data);
       setAnalysis(data);
 
       // Set basic project info from response
@@ -64,8 +66,9 @@ export default function Dashboard() {
       });
 
       setError("");
+      console.log("✓ Dashboard ready");
     } catch (err) {
-      console.error("Error fetching analysis:", err);
+      console.error("❌ Error loading analysis:", err);
       setError("Failed to load analysis data");
     } finally {
       setLoading(false);
@@ -88,7 +91,7 @@ export default function Dashboard() {
           <h2 className="text-red-400 font-bold text-xl mb-2">Error</h2>
           <p className="text-gray-400 mb-6">{error}</p>
           <button
-            onClick={() => navigate("/")}
+            onClick={() => navigate("/projects")}
             className="px-6 py-2 bg-[#00ff88] text-black font-bold rounded-lg hover:bg-[#00cc6a] transition-colors"
           >
             Back to Projects
@@ -103,11 +106,14 @@ export default function Dashboard() {
       <div className="min-h-screen bg-black flex items-center justify-center text-white">
         <div className="bg-zinc-900/50 border border-zinc-800 rounded-lg p-8 max-w-md text-center">
           <h2 className="font-bold text-xl mb-2">No Data</h2>
-          <p className="text-gray-400 mb-6">
+          <p className="text-gray-400 mb-2">
             No analysis data found for this project.
           </p>
+          <p className="text-xs text-gray-500 mb-4 font-mono">
+            Analysis: {analysis ? "✓" : "✗"} | Project: {project ? "✓" : "✗"}
+          </p>
           <button
-            onClick={() => navigate("/")}
+            onClick={() => navigate("/projects")}
             className="px-6 py-2 bg-[#00ff88] text-black font-bold rounded-lg hover:bg-[#00cc6a] transition-colors"
           >
             Back to Projects
@@ -124,7 +130,7 @@ export default function Dashboard() {
         <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-4">
             <button
-              onClick={() => navigate("/")}
+              onClick={() => navigate("/projects")}
               className="text-[#00ff88] hover:text-[#00bb5a] transition-colors flex items-center gap-1"
             >
               <ArrowLeft className="w-4 h-4" />
@@ -219,25 +225,27 @@ export default function Dashboard() {
                 </tr>
               </thead>
               <tbody>
-                {analysis?.transactions.slice(0, 10).map((tx: Transaction) => (
+                {analysis?.transactions.slice(0, 10).map((tx: any) => (
                   <tr
                     key={tx.id}
                     className="border-b border-zinc-800 hover:bg-zinc-900/50 transition-colors"
                   >
                     <td className="px-4 py-3">
                       <code className="bg-black/50 px-2 py-1 rounded text-[#00ff88] text-xs font-mono border border-zinc-800">
-                        {tx.from.slice(0, 12)}...
+                        {(tx.from_wallet || "").slice(0, 12)}...
                       </code>
                     </td>
                     <td className="px-4 py-3">
                       <code className="bg-black/50 px-2 py-1 rounded text-[#00ff88] text-xs font-mono border border-zinc-800">
-                        {tx.to.slice(0, 12)}...
+                        {(tx.to_wallet || "").slice(0, 12)}...
                       </code>
                     </td>
                     <td className="px-4 py-3 text-gray-300">
                       {tx.amount.toFixed(2)}
                     </td>
-                    <td className="px-4 py-3 text-gray-400">{tx.tokenType}</td>
+                    <td className="px-4 py-3 text-gray-400">
+                      {tx.token_type || "ETH"}
+                    </td>
                     <td className="px-4 py-3 text-gray-400">
                       {new Date(tx.timestamp).toLocaleDateString()}
                     </td>
@@ -251,6 +259,17 @@ export default function Dashboard() {
               Showing 10 of {analysis.transactions.length} transactions
             </p>
           )}
+        </div>
+
+        {/* Debug Panel */}
+        <div className="mt-8 bg-zinc-900/50 border border-zinc-800/50 rounded-lg p-4 text-xs font-mono text-gray-400">
+          <div className="text-[#00ff88] mb-2">DEBUG INFO:</div>
+          <div>Project ID: {projectId}</div>
+          <div>Analysis Wallets: {analysis?.wallets?.length || 0}</div>
+          <div>
+            Analysis Transactions: {analysis?.transactions?.length || 0}
+          </div>
+          <div>Project Name: {project?.name || "N/A"}</div>
         </div>
       </main>
     </div>

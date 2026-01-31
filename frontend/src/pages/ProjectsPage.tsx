@@ -150,7 +150,7 @@ export function ProjectsPage() {
   };
 
   const handleViewProject = (projectId: string) => {
-    navigate(`/dashboard?projectId=${projectId}`);
+    navigate(`/dashboard/${projectId}`);
   };
 
   const handleLogout = async () => {
