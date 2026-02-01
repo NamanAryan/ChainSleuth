@@ -10,6 +10,7 @@ import {
   AlertTriangle,
   Trash2,
 } from "lucide-react";
+import { Drawer } from "antd"; 
 
 export function ProjectsPage() {
   const { signOut } = useAuth();
@@ -1037,5 +1038,59 @@ export function ProjectsPage() {
         </div>
       )}
     </div>
+  );
+
+  const InvestigationAssistant = () => {
+    const [visible, setVisible] = useState(false);
+
+    const showDrawer = () => {
+      setVisible(true);
+    };
+
+    const onClose = () => {
+      setVisible(false);
+    };
+
+    return (
+      <>
+        <button
+          onClick={showDrawer}
+          style={{
+            position: "fixed",
+            bottom: "20px",
+            right: "20px",
+            backgroundColor: "#1a1a1a",
+            color: "#fff",
+            border: "none",
+            borderRadius: "50%",
+            padding: "10px 15px",
+            cursor: "pointer",
+          }}
+        >
+          Chat
+        </button>
+        <Drawer
+          title="Investigation Assistant (Beta)"
+          placement="right"
+          onClose={onClose}
+          open={visible}
+        >
+          <div>
+            {/* Content for the assistant will go here */}
+            <p>
+              This assistant explains existing findings, but detection decisions
+              are handled by the AML engine.
+            </p>
+          </div>
+        </Drawer>
+      </>
+    );
+  };
+
+  return (
+    <>
+      <ProjectsPage />
+      <InvestigationAssistant />
+    </>
   );
 }

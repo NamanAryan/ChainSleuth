@@ -4,7 +4,8 @@ import { supabase } from "../lib/supabase";
 import GraphVisualization from "../components/GraphVisualization";
 import NotesPanel from "../components/NotesPanel";
 import type { Project, AnalysisResult } from "../types";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, MessageCircle } from "lucide-react";
+import { Drawer } from "antd";
 
 export default function Dashboard() {
   const { projectId } = useParams<{ projectId: string }>();
@@ -38,6 +39,12 @@ export default function Dashboard() {
     startTime: string;
     endTime: string;
   } | null>(null);
+  const [visible, setVisible] = useState(false);
+  const [chatMessages, setChatMessages] = useState<
+    Array<{ role: "user" | "assistant"; content: string }>
+  >([]);
+  const [chatInput, setChatInput] = useState("");
+  const [chatLoading, setChatLoading] = useState(false);
 
   const fetchProjectAnalysis = useCallback(async () => {
     try {
@@ -97,6 +104,94 @@ export default function Dashboard() {
 
     fetchProjectAnalysis();
   }, [projectId, navigate]);
+
+  const showDrawer = () => {
+    setVisible(true);
+  };
+
+  const onClose = () => {
+    setVisible(false);
+  };
+
+  const handleChatSubmit = async (question: string) => {
+    if (!question.trim()) return;
+
+    // Add user message
+    const userMessage = { role: "user" as const, content: question };
+    setChatMessages((prev) => [...prev, userMessage]);
+    setChatInput("");
+    setChatLoading(true);
+
+    try {
+      const context = {
+        project: project
+          ? {
+              id: project.id,
+              name: project.name,
+              dataset: "ethereum-mainnet-q4-2024",
+              walletCount: analysis?.statistics?.uniqueWallets || 0,
+              transactionCount: analysis?.statistics?.totalTransactions || 0,
+              suspiciousCount: analysis?.statistics?.suspiciousWallets || 0,
+            }
+          : null,
+        wallet: selectedWallet
+          ? {
+              hash: selectedWallet.hash,
+              riskScore: selectedWallet.riskScore,
+              transactionCount: selectedWallet.transactionCount,
+              inflow: selectedWallet.inflow,
+              outflow: selectedWallet.outflow,
+            }
+          : null,
+        pattern: selectedPattern
+          ? {
+              type: selectedPattern.type,
+              walletHash: selectedPattern.walletHash,
+              walletCount: selectedPattern.wallets?.length || 0,
+              details: selectedPattern.type.toUpperCase(),
+            }
+          : null,
+      };
+
+      const response = await fetch("http://localhost:8000/assistant/query", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ question, context }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to get assistant response");
+      }
+
+      const data = await response.json();
+      const assistantMessage = {
+        role: "assistant" as const,
+        content: data.response || data.answer || "No response available.",
+      };
+      setChatMessages((prev) => [...prev, assistantMessage]);
+    } catch (err) {
+      console.error("Error:", err);
+      const errorMessage = {
+        role: "assistant" as const,
+        content:
+          "I can help explain the findings from your analysis. Try asking about a specific wallet, pattern, or investigation step.",
+      };
+      setChatMessages((prev) => [...prev, errorMessage]);
+    } finally {
+      setChatLoading(false);
+    }
+  };
+
+  const quickPrompts = [
+    { icon: "🔍", text: "Why is this wallet high risk?" },
+    { icon: "📊", text: "Explain this pattern" },
+    { icon: "📋", text: "Summarize this investigation" },
+    { icon: "⚠️", text: "What patterns should I investigate?" },
+    { icon: "💡", text: "What are money laundering techniques?" },
+    { icon: "✅", text: "How confident is this detection?" },
+  ];
 
   if (loading) {
     return (
@@ -1352,6 +1447,144 @@ export default function Dashboard() {
           </div>
         </section>
       </main>
+
+      {/* Floating Chat Button */}
+      <button
+        onClick={showDrawer}
+        className="fixed bottom-6 right-6 w-14 h-14 bg-cyan-500 hover:bg-cyan-600 text-white rounded-full shadow-lg flex items-center justify-center cursor-pointer transition-all duration-200 hover:scale-110 z-50 border-0"
+        aria-label="Open Investigation Assistant"
+        type="button"
+      >
+        <MessageCircle size={28} />
+      </button>
+
+      {/* Drawer for Investigation Assistant */}
+      <Drawer
+        title={
+          <div className="flex items-center gap-2">
+            <span className="text-lg">🤖</span>
+            <span>Investigation Assistant</span>
+          </div>
+        }
+        placement="right"
+        onClose={onClose}
+        open={visible}
+        bodyStyle={{ backgroundColor: "#0f0f0f", color: "white", padding: 0 }}
+        headerStyle={{
+          backgroundColor: "#1a1a1a",
+          borderBottom: "1px solid #333",
+          color: "white",
+        }}
+        width={400}
+      >
+        <div className="h-full flex flex-col bg-gradient-to-b from-zinc-950 to-black/80">
+          {/* Messages Container */}
+          <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            {chatMessages.length === 0 ? (
+              <div className="text-center text-gray-400 text-sm mt-6">
+                <div className="mb-6 p-4 bg-cyan-500/10 border border-cyan-500/30 rounded-lg">
+                  <p className="text-cyan-400 font-semibold mb-2">
+                    💡 Get Started
+                  </p>
+                  <p className="text-xs text-gray-300">
+                    Ask questions about wallet risks, AML patterns, or
+                    investigation steps. Select a wallet or pattern for more
+                    contextual insights.
+                  </p>
+                </div>
+              </div>
+            ) : (
+              chatMessages.map((msg, idx) => (
+                <div
+                  key={idx}
+                  className={`flex ${
+                    msg.role === "user" ? "justify-end" : "justify-start"
+                  }`}
+                >
+                  <div
+                    className={`max-w-xs px-4 py-3 rounded-lg text-sm leading-relaxed ${
+                      msg.role === "user"
+                        ? "bg-cyan-600/80 text-white rounded-br-none"
+                        : "bg-zinc-800/80 text-gray-100 rounded-bl-none border border-zinc-700/50"
+                    }`}
+                  >
+                    {msg.content}
+                  </div>
+                </div>
+              ))
+            )}
+            {chatLoading && (
+              <div className="flex justify-start">
+                <div className="bg-zinc-800/80 text-gray-100 px-4 py-3 rounded-lg text-sm border border-zinc-700/50 rounded-bl-none">
+                  <div className="flex gap-1.5">
+                    <div className="w-2 h-2 bg-cyan-400 rounded-full animate-bounce"></div>
+                    <div
+                      className="w-2 h-2 bg-cyan-400 rounded-full animate-bounce"
+                      style={{ animationDelay: "0.1s" }}
+                    ></div>
+                    <div
+                      className="w-2 h-2 bg-cyan-400 rounded-full animate-bounce"
+                      style={{ animationDelay: "0.2s" }}
+                    ></div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Quick Prompts - Always visible, scrollable */}
+          <div className="px-4 py-3 border-t border-zinc-800/60 bg-black/40">
+            <div className="text-xs text-gray-500 font-semibold mb-3 uppercase tracking-wide">
+              Quick Prompts
+            </div>
+            <div className="space-y-2 max-h-64 overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-zinc-700 scrollbar-track-transparent">
+              {quickPrompts.map((prompt, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => handleChatSubmit(prompt.text)}
+                  disabled={chatLoading}
+                  className="w-full text-left text-xs p-3 rounded-lg border border-zinc-700/60 bg-zinc-900/50 hover:bg-zinc-800/80 hover:border-cyan-500/40 text-gray-300 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-start gap-2"
+                >
+                  <span className="text-base flex-shrink-0">{prompt.icon}</span>
+                  <span className="flex-1">{prompt.text}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Input Area */}
+          <div className="border-t border-zinc-800/60 p-4 bg-black/60">
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                onKeyPress={(e) => {
+                  if (e.key === "Enter" && !chatLoading) {
+                    handleChatSubmit(chatInput);
+                  }
+                }}
+                placeholder="Ask anything..."
+                disabled={chatLoading}
+                className="flex-1 bg-zinc-900/80 border border-zinc-700/60 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-cyan-500/60 focus:ring-1 focus:ring-cyan-500/20 disabled:opacity-50 transition-all"
+              />
+              <button
+                onClick={() => handleChatSubmit(chatInput)}
+                disabled={chatLoading || !chatInput.trim()}
+                className="bg-gradient-to-r from-cyan-600 to-cyan-500 hover:from-cyan-700 hover:to-cyan-600 disabled:from-gray-700 disabled:to-gray-600 text-white px-4 py-2.5 rounded-lg text-sm font-semibold transition-all duration-200 disabled:cursor-not-allowed flex items-center justify-center gap-1"
+              >
+                {chatLoading ? (
+                  <span className="text-xs">●●●</span>
+                ) : (
+                  <>
+                    <span>→</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      </Drawer>
     </>
   );
 }

@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, Header, Form
 from fastapi.middleware.cors import CORSMiddleware
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 import os
 import random
 from dotenv import load_dotenv
@@ -10,6 +10,8 @@ import io
 from datetime import datetime, timedelta
 from pydantic import BaseModel
 from collections import defaultdict, deque
+import ollama
+import json
 
 # Load environment variables
 load_dotenv()
@@ -102,6 +104,19 @@ class NoteResponse(BaseModel):
     content: str
     created_by: str
     created_at: str
+
+class AssistantContext(BaseModel):
+    project: Optional[Dict[str, Any]] = None
+    wallet: Optional[Dict[str, Any]] = None
+    pattern: Optional[Dict[str, Any]] = None
+
+class AssistantRequest(BaseModel):
+    question: str
+    context: Optional[AssistantContext] = None
+
+class AssistantResponse(BaseModel):
+    response: str
+    context_used: bool
 
 # Dependency to get current user from JWT and create user-specific client
 async def get_current_user(authorization: str = Header(...)):
@@ -912,6 +927,142 @@ async def delete_note(note_id: str, auth_context = Depends(get_current_user)):
     except Exception as e:
         print(f"❌ Error deleting note: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/assistant/query", response_model=AssistantResponse)
+async def query_assistant(request: AssistantRequest):
+    """
+    Query the Investigation Assistant powered by Ollama LLM.
+    The assistant provides read-only explanations of AML findings.
+    """
+    try:
+        print(f"\n🤖 Assistant query received: {request.question[:50]}...")
+        
+        # Build comprehensive system prompt with project context
+        system_prompt = """You are an expert AML analyst assistant for ChainSleuth, a crypto transaction network analysis platform.
+
+YOUR ROLE:
+- Provide immediate, actionable insights about wallet risk and transaction patterns
+- Explain the AML detection algorithms and why specific wallets were flagged
+- Help investigators understand money laundering techniques and red flags
+- Recommend focused investigation next steps
+- Work with whatever context is provided - if context exists, use it directly without asking for more
+
+AML PATTERNS YOU EXPLAIN:
+Circular Transactions: Funds moving in loops back to origin (high money laundering indicator)
+Layering: Funds split through multiple intermediaries to obscure source (obfuscation technique)
+Structuring/Smurfing: Many small transactions to avoid detection thresholds
+Pass-Through Wallets: Quick in-out movements (90%+ of inflow exits) - classic mixing pattern
+Peel Chains: Sequential linear transactions with gradual value reduction
+Mixer Interactions: Direct contact with known mixing/tumbling services
+Fan-In/Fan-Out: Concentration/distribution patterns (aggregation/dispersal of funds)
+Dormant Activation: Sudden high activity after long inactivity
+
+RISK SCORING FACTORS:
+- Intermediary behavior (3+ in AND 3+ out connections) = 60 points
+- High fan-in (50+ senders) = 55 points
+- Mixer interaction = 40 points
+- Circular transactions = 35 points
+- Layering patterns = 30 points
+- High value loss (imbalanced in/out) = 15-25 points
+- Each point represents a specific behavioral indicator
+
+HOW TO RESPOND:
+✓ If context provided: Analyze it directly - explain the specific patterns detected
+✓ If no context: Ask the analyst to select a wallet/pattern to analyze together
+✓ Always reference actual metrics from the data (amounts, wallet addresses, transaction counts)
+✓ Be confident and informative - you're the expert explaining algorithmic findings
+✓ Use 2-4 sentences typically, be direct and actionable
+
+CONSTRAINTS:
+✗ Cannot modify risk scores or flag new wallets (detection is automated)
+✗ Cannot override the algorithm or provide financial advice
+✗ Must ground all explanations in detected patterns and provided context"""
+
+        # Build rich context if provided
+        context_info = ""
+        context_summary = "general investigation"
+        
+        if request.context:
+            context_parts = []
+            
+            if request.context.project:
+                proj = request.context.project
+                context_parts.append(f"📊 Dataset: {proj.get('name', 'Unknown')} ({proj.get('dataset', 'ethereum-mainnet-q4-2024')})")
+                context_parts.append(f"   Total wallets: {proj.get('walletCount', 0)} | Total transactions: {proj.get('transactionCount', 0)} | Suspicious: {proj.get('suspiciousCount', 0)}")
+            
+            if request.context.wallet:
+                wallet = request.context.wallet
+                context_parts.append(
+                    f"\n👛 WALLET IN FOCUS:\n"
+                    f"   Address: {wallet.get('hash', 'Unknown')}\n"
+                    f"   Risk Score: {wallet.get('riskScore', 'N/A')}/100\n"
+                    f"   Inflow: ${wallet.get('inflow', 0):,.2f} | Outflow: ${wallet.get('outflow', 0):,.2f}\n"
+                    f"   Transactions: {wallet.get('transactionCount', 0)}"
+                )
+                context_summary = f"wallet {wallet.get('hash', '')[:8]}... (risk {wallet.get('riskScore', 'N/A')}/100)"
+            
+            if request.context.pattern:
+                pattern = request.context.pattern
+                context_parts.append(
+                    f"\n⚠️ PATTERN DETECTED:\n"
+                    f"   Type: {pattern.get('type', 'Unknown').upper()}\n"
+                    f"   Wallets Involved: {pattern.get('walletCount', 1)}\n"
+                    f"   Primary: {pattern.get('walletHash', 'Unknown')[:16]}..."
+                )
+                context_summary = f"{pattern.get('type', 'pattern').upper()} pattern"
+            
+            if context_parts:
+                context_info = "\n\nCONTEXT FOR THIS ANALYSIS:\n" + "\n".join(context_parts)
+
+        # Construct full prompt with context
+        full_prompt = system_prompt + context_info + f"\n\n🔍 ANALYST QUESTION: {request.question}"
+
+        # Query Ollama with optimized settings
+        print("🔄 Querying Ollama (gemma3:4b model)...")
+        response = ollama.generate(
+            model="gemma3:4b",
+            prompt=full_prompt,
+            system=system_prompt,
+            stream=False,
+            options={
+                "temperature": 0.3,  # Lower temperature for more consistent, factual responses
+                "top_p": 0.8,
+                "top_k": 40,
+            }
+        )
+
+        assistant_response = response.get("response", "").strip()
+        
+        # Fallback response if empty - be proactive based on whether context exists
+        if not assistant_response:
+            if request.context and (request.context.wallet or request.context.pattern):
+                assistant_response = f"I can help analyze the {context_summary} in your dataset. Try asking specific questions like: 'What patterns does this show?' or 'Why is the risk score high?' or 'What should I investigate first?'"
+            else:
+                assistant_response = "Select a wallet or pattern from the dashboard to start your investigation. I'll help explain the risk factors and detected money laundering patterns."
+
+        print(f"✓ Assistant response generated ({len(assistant_response)} chars)")
+        print(f"✓ Context: {context_summary}")
+        
+        return AssistantResponse(
+            response=assistant_response,
+            context_used=bool(request.context and any([
+                request.context.project,
+                request.context.wallet,
+                request.context.pattern
+            ]))
+        )
+
+    except Exception as e:
+        print(f"❌ Error in assistant endpoint: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        # Return helpful fallback response instead of error
+        return AssistantResponse(
+            response="I'm ready to help analyze suspicious transactions and patterns. Select a wallet or pattern, then ask me about the risk factors or detected money laundering techniques.",
+            context_used=False
+        )
+
 
 
 if __name__ == "__main__":
